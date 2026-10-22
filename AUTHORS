@@ -18,4 +18,7 @@ a ton of lazy error checking issues.
 Thanks to Derrick Lyndon Pallas for fixing an uninitialised memory error
 when closing a wandio writer.
 
+Thanks to Justin Loye for reporting and fixing an issue where libcurl 8.6
+caused HTTP downloads to become incredibly slow.
+
 Thanks to Brad Cowie for packaging libwandio for Debian.

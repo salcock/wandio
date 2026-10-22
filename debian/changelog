@@ -1,3 +1,9 @@
+libwandio1 (4.2.8-1) unstable; urgency=medium
+
+  * Fix terrible HTTP read performance when linked against libcurl 8.6
+
+ -- Shane Alcock <shane@alcock.co.nz>  Thu, 22 Oct 2026 17:42:10 +1300
+
 libwandio1 (4.2.7-1) unstable; urgency=medium
 
   * Fix bug in length check when reading zstd/lz4.
