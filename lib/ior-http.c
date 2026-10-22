@@ -149,43 +149,18 @@ static int fill_buffer(io_t *io) {
         if (DATA(io)->done_reading)
                 return FILL_FINISHED;
 
-        int n_running, rc;
-        fd_set fdr, fdw, fde;
+        int n_running, rc, numfds;
+
+        /* Fix for libcurl 8 (reported by Justin Loye):
+         * The write callback pauses the transfer when the buffer is full,
+         * and a paused transfer reports no socket to wait on. This means that
+         * waiting *before* unpausing is going to always be stuck for its
+         * entire timeout, i.e. a single 16KB chunk per second.
+         *
+         * Instead, we need to unpause and read first, only waiting if the
+         * transfer is active and there is room in the buffer.
+         */
         do {
-                int maxfd = -1;
-                long curl_to = -1;
-                struct timeval to;
-                // the following is adaped from docs/examples/fopen.c
-                to.tv_sec = 10, to.tv_usec = 0;  // 10 seconds
-                if (curl_multi_timeout(DATA(io)->multi, &curl_to) != CURLM_OK) {
-                  return -1;
-                }
-                if (curl_to >= 0) {
-                        to.tv_sec = curl_to / 1000;
-                        if (to.tv_sec > 1)
-                                to.tv_sec = 1;
-                        else
-                                to.tv_usec = (curl_to % 1000) * 1000;
-                }
-                FD_ZERO(&fdr);
-                FD_ZERO(&fdw);
-                FD_ZERO(&fde);
-
-                if (curl_multi_fdset(DATA(io)->multi, &fdr, &fdw, &fde,
-                                     &maxfd) != CURLM_OK) {
-                  return -1;
-                }
-                if (maxfd >= 0 &&
-                    (rc = select(maxfd + 1, &fdr, &fdw, &fde, &to)) < 0)
-                        break;
-
-                /* check curl_multi_fdset.3 about why we wait for 100ms here */
-                if (maxfd < 0) {
-                        struct timespec req, rem;
-                        req.tv_sec = 0;
-                        req.tv_nsec = 100000000;  // 100ms
-                        nanosleep(&req, &rem);
-                }
                 curl_easy_pause(DATA(io)->curl, CURLPAUSE_CONT);
                 do {
                         rc = curl_multi_perform(DATA(io)->multi, &n_running);
@@ -201,8 +176,16 @@ static int fill_buffer(io_t *io) {
                                           &cl);
                         DATA(io)->total_length = (int64_t)cl;
                 }
-        } while (n_running &&
-                 DATA(io)->l_buf < DATA(io)->m_buf - CURL_MAX_WRITE_SIZE);
+
+                if (!n_running || DATA(io)->l_buf >= DATA(io)->m_buf - CURL_MAX_WRITE_SIZE) {
+                    break;
+                }
+
+                numfds = 0;
+                if (curl_multi_wait(DATA(io)->multi, NULL, 0, 1000, &numfds) != CURLM_OK) {
+                    return -1;
+                }
+        } while (1);
 
         // check if there were any errors from curl
         struct CURLMsg *m = NULL;
@@ -224,7 +207,7 @@ static int fill_buffer(io_t *io) {
             gettimeofday(&tv, NULL);
             // there was an error reading -- if this is the first
             // read, then the wandio_create call will fail.
-            fprintf(stderr, "%u HTTP ERROR: %s (%d)\n", tv.tv_sec,
+            fprintf(stderr, "%lu HTTP ERROR: %s (%d)\n", tv.tv_sec,
                     curl_easy_strerror(m->data.result),
                     m->data.result);
             return -1;
